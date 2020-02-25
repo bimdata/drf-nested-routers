@@ -29,6 +29,10 @@ class Child(models.Model):
     name = models.CharField(max_length=255)
     parent = models.ForeignKey(Root, on_delete=models.CASCADE)
 
+class GrandChild(models.Model):
+    name = models.CharField(max_length=255)
+    prefered = models.ForeignKey(Root, on_delete=models.CASCADE, related_name="prefered", null=True)
+    roots = models.ManyToManyField(Root, related_name="grand_childs")
 
 class RootSerializer(HyperlinkedModelSerializer):
     class Meta:
@@ -41,6 +45,11 @@ class ChildSerializer(NestedHyperlinkedModelSerializer):
         model = Child
         fields = ('name', 'parent', )
 
+
+class GrandChildSerializer(NestedHyperlinkedModelSerializer):
+    class Meta:
+        model = GrandChild
+        fields = ('name', 'prefered', 'roots', )
 
 class RootViewSet(ModelViewSet):
     serializer_class = RootSerializer
@@ -58,11 +67,23 @@ class ChildWithNestedMixinViewSet(NestedViewSetMixin, ModelViewSet):
     queryset = Child.objects.all()
 
 
+
+class GrandChildWithNestedMixinViewSet(NestedViewSetMixin, ModelViewSet):
+    """Identical to `ChildViewSet` but with the mixin."""
+    serializer_class = GrandChildSerializer
+    queryset = GrandChild.objects.all()
+
+    parent_lookup_kwargs = {
+        "parent_pk": ("prefered_id", "roots__id")
+    }
+
+
 router = SimpleRouter()
 router.register('root', RootViewSet, base_name='root')
 root_router = NestedSimpleRouter(router, r'root', lookup='parent')
 root_router.register(r'child', ChildViewSet, base_name='child')
 root_router.register(r'child-with-nested-mixin', ChildWithNestedMixinViewSet, base_name='child-with-nested-mixin')
+root_router.register(r'grand-child-with-nested-mixin', GrandChildWithNestedMixinViewSet, base_name='grand-child-with-nested-mixin')
 
 
 urlpatterns = [
@@ -103,6 +124,9 @@ class TestNestedSimpleRouter(TestCase):
         self.root_1_child_with_nested_mixin_list_url = reverse('child-with-nested-mixin-list', kwargs={
             'parent_pk': self.root_1.pk,
         })
+        self.root_1_grand_child_with_nested_mixin_list_url = reverse('grand-child-with-nested-mixin-list', kwargs={
+            'parent_pk': self.root_1.pk,
+        })
 
     def test_nested_child_viewset(self):
         """
@@ -115,7 +139,7 @@ class TestNestedSimpleRouter(TestCase):
         response = self.client.get(self.root_1_child_list_url, content_type='application/json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-        data = json.loads(response.content.decode())
+        data = response.json()
 
         self.assertEqual(len(data), 2)
 
@@ -130,7 +154,36 @@ class TestNestedSimpleRouter(TestCase):
         response = self.client.get(self.root_1_child_with_nested_mixin_list_url, content_type='application/json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-        data = json.loads(response.content.decode())
+        data = response.json()
 
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]['name'], self.root_1_child_a.name)
+
+    def test_nested_grand_child_viewset_with_or_selection(self):
+        """
+        The `ViewSet` that uses the `NestedViewSetMixin` filters the
+        `QuerySet` to only those objects that are attached to prefered root or one of his roots.
+
+        We request all children "from root 1". In return, we get only the
+        children from root 1.
+        """
+        root_1_grand_child_a = GrandChild.objects.create(name="first", prefered=self.root_1)
+        response = self.client.get(self.root_1_grand_child_with_nested_mixin_list_url, content_type='application/json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        data = response.json()
+
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['name'], root_1_grand_child_a.name)
+        root_1_grand_child_a.delete()
+
+        root_1_grand_child_b = GrandChild.objects.create(name="second")
+        root_1_grand_child_b.roots.add(self.root_1)
+
+        response = self.client.get(self.root_1_grand_child_with_nested_mixin_list_url, content_type='application/json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        data = response.json()
+        print(data)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['name'], root_1_grand_child_b.name)
