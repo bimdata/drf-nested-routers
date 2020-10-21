@@ -11,7 +11,6 @@ class NestedViewSetMixin(object):
         `serializer_class.parent_lookup_kwargs` or `viewset.parent_lookup_kwargs`
         """
         queryset = super(NestedViewSetMixin, self).get_queryset()
-
         parent_lookup_kwargs = getattr(self, 'parent_lookup_kwargs', None)
 
         if not parent_lookup_kwargs:
@@ -29,4 +28,5 @@ class NestedViewSetMixin(object):
                 else:
                     orm_kwargs_filters[field_name] = self.kwargs[query_param]
             return queryset.filter(*orm_arg_filters, **orm_kwargs_filters)
+
         return queryset
